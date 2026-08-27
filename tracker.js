@@ -55,4 +55,8 @@ function applyUpdate(callerId, symbol, kind) {
   return call;
 }
 
-module.exports = { addCall, getOpenCall, applyUpdate };
+function countOpenCalls() {
+  return Object.values(store).filter((c) => c.status === "open").length;
+}
+
+module.exports = { addCall, getOpenCall, applyUpdate, countOpenCalls };

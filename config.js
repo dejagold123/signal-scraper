@@ -22,6 +22,11 @@ const config = {
   wa: {
     target: process.env.WA_TARGET,
   },
+  backup: {
+    botToken: process.env.TG_BOT_TOKEN || "",
+    chatId: process.env.TG_BOT_CHAT_ID || "",
+  },
+  heartbeatHours: parseInt(process.env.HEARTBEAT_HOURS || "24", 10),
 };
 
 function isWatchedSender(senderId, senderUsername) {

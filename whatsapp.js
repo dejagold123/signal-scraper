@@ -33,9 +33,27 @@ function createWhatsAppClient() {
 async function sendWhatsApp(client, target, message) {
   try {
     await client.sendMessage(target, message);
+    return true;
   } catch (err) {
     console.error("Failed to send WhatsApp message:", err.message);
+    return false;
   }
 }
 
-module.exports = { createWhatsAppClient, sendWhatsApp };
+// Tries WhatsApp first; on failure (or if the client isn't ready), falls
+// back to the Telegram bot backup channel so a WhatsApp outage doesn't mean
+// total silence. Prefixes the backup message so you know which path it came
+// through.
+async function sendWithFallback(client, target, message) {
+  const { sendBackup, backupEnabled } = require("./backup");
+  const ok = await sendWhatsApp(client, target, message);
+  if (!ok && backupEnabled()) {
+    console.log("Falling back to backup channel...");
+    await sendBackup(`[WhatsApp delivery failed — backup channel]\n\n${message}`);
+  } else if (!ok) {
+    console.error("WhatsApp send failed and no backup channel configured — message lost.");
+  }
+  return ok;
+}
+
+module.exports = { createWhatsAppClient, sendWhatsApp, sendWithFallback };

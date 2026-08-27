@@ -3,11 +3,22 @@
 // find a symbol, it still forwards the raw text as an "unclassified" message
 // rather than silently dropping it.
 
-const SYMBOL_RE = /\$?\b([A-Z]{2,10})(?:\s?\/\s?(?:USDT|USD|PERP))?\b/;
+// Prefer a $-prefixed symbol (unambiguous). Fall back to a bare all-caps
+// word, but exclude common trade-vocabulary words that would otherwise get
+// mistaken for the symbol itself (e.g. "LONG $BTC" matching "LONG").
+const SYMBOL_DOLLAR_RE = /\$([A-Z]{2,10})\b/;
+const SYMBOL_BARE_RE = /\b([A-Z]{2,10})(?:\s?\/\s?(?:USDT|USD|PERP))?\b/;
+const SYMBOL_STOPWORDS = new Set([
+  "LONG", "SHORT", "BUY", "SELL", "SL", "TP", "ENTRY", "USDT", "USD",
+  "PERP", "BE", "OK",
+]);
 const DIRECTION_RE = /\b(long|short|buy|sell)\b/i;
 const ENTRY_RE = /entry[:\s]*([\d,.]+(?:\s*-\s*[\d,.]+)?)/i;
 const SL_RE = /(?:stop\s?loss|sl)[:\s]*([\d,.]+)/i;
-const TP_RE = /tp\s?(\d)?[:\s]*([\d,.]+)/gi;
+// Index digit (TP1, TP2) must immediately follow "tp" with no space —
+// otherwise "TP 3000" (no index) would greedily eat the "3" as the index
+// and leave "000" as the price.
+const TP_RE = /tp(\d+)?\s*[:=]?\s*([\d,.]+)/gi;
 const LEVERAGE_RE = /(\d{1,3})x/i;
 
 const UPDATE_KEYWORDS = [
@@ -20,8 +31,17 @@ const UPDATE_KEYWORDS = [
 ];
 
 function extractSymbol(text) {
-  const m = text.match(SYMBOL_RE);
-  return m ? m[1].toUpperCase() : null;
+  const dollarMatch = text.match(SYMBOL_DOLLAR_RE);
+  if (dollarMatch) return dollarMatch[1].toUpperCase();
+
+  // Fall back to scanning all-caps words for the first one that isn't a
+  // known stopword, rather than blindly taking the first match.
+  const bareMatches = text.match(new RegExp(SYMBOL_BARE_RE, "g")) || [];
+  for (const raw of bareMatches) {
+    const word = raw.split("/")[0].trim().toUpperCase();
+    if (!SYMBOL_STOPWORDS.has(word)) return word;
+  }
+  return null;
 }
 
 function detectUpdate(text) {
@@ -60,6 +80,14 @@ function parseMessage(text) {
 
     const leverage = (text.match(LEVERAGE_RE) || [])[1] || null;
 
+    // Confidence reflects how many expected fields were actually found —
+    // low-confidence calls still get forwarded, but flagged so you know to
+    // go check the original message before acting on it.
+    const fieldsFound = [symbol, direction, entry, sl, tps.length > 0].filter(Boolean).length;
+    let confidence = "low";
+    if (fieldsFound >= 4) confidence = "high";
+    else if (fieldsFound >= 2) confidence = "medium";
+
     return {
       type: "call",
       symbol,
@@ -68,6 +96,7 @@ function parseMessage(text) {
       sl,
       tps,
       leverage,
+      confidence,
       raw: text,
     };
   }

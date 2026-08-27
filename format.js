@@ -1,5 +1,15 @@
+const CONFIDENCE_BADGE = {
+  high: "🟢",
+  medium: "🟡",
+  low: "🟠",
+};
+
 function formatNewCall(callerName, parsed) {
-  const lines = [`🟢 New call from ${callerName}`];
+  const badge = CONFIDENCE_BADGE[parsed.confidence] || "🟢";
+  const lines = [`${badge} New call from ${callerName}`];
+  if (parsed.confidence && parsed.confidence !== "high") {
+    lines.push(`(${parsed.confidence} confidence parse — check original)`);
+  }
   if (parsed.symbol) lines.push(`Symbol: ${parsed.symbol}`);
   if (parsed.direction) lines.push(`Direction: ${parsed.direction}`);
   if (parsed.entry) lines.push(`Entry: ${parsed.entry}`);
@@ -9,6 +19,23 @@ function formatNewCall(callerName, parsed) {
   lines.push("");
   lines.push(`"${parsed.raw}"`);
   return lines.join("\n");
+}
+
+function formatUnclassified(callerName, raw) {
+  return [
+    `⚠️ Unrecognized format from ${callerName} — forwarding raw, couldn't parse it:`,
+    "",
+    `"${raw}"`,
+  ].join("\n");
+}
+
+function formatHeartbeat(channel, openCallCount) {
+  const time = new Date().toLocaleString();
+  return [
+    `✅ Signal bot heartbeat — ${time}`,
+    `Watching: ${channel}`,
+    `Open calls tracked: ${openCallCount}`,
+  ].join("\n");
 }
 
 const UPDATE_LABELS = {
@@ -33,4 +60,10 @@ function formatUnmatchedUpdate(callerName, raw) {
   ].join("\n");
 }
 
-module.exports = { formatNewCall, formatUpdate, formatUnmatchedUpdate };
+module.exports = {
+  formatNewCall,
+  formatUpdate,
+  formatUnmatchedUpdate,
+  formatUnclassified,
+  formatHeartbeat,
+};

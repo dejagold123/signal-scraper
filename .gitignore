@@ -2,4 +2,7 @@ node_modules/
 .env
 wa-session/
 active-calls.json
+events.jsonl
+send-queue.json
+sample-messages.txt
 *.log

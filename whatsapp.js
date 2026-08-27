@@ -1,5 +1,6 @@
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
+const { enqueue, markDelivered } = require("./queue");
 
 function createWhatsAppClient() {
   const client = new Client({
@@ -40,18 +41,23 @@ async function sendWhatsApp(client, target, message) {
   }
 }
 
-// Tries WhatsApp first; on failure (or if the client isn't ready), falls
-// back to the Telegram bot backup channel so a WhatsApp outage doesn't mean
-// total silence. Prefixes the backup message so you know which path it came
-// through.
+// Tries WhatsApp first; on failure, queues the message durably (survives a
+// crash/restart) AND falls back to the Telegram bot backup channel
+// immediately so a WhatsApp outage doesn't mean total silence right now.
+// The durable queue is retried on startup and periodically via
+// queue.flushQueue(), separate from the one-shot backup send.
 async function sendWithFallback(client, target, message) {
   const { sendBackup, backupEnabled } = require("./backup");
   const ok = await sendWhatsApp(client, target, message);
-  if (!ok && backupEnabled()) {
-    console.log("Falling back to backup channel...");
-    await sendBackup(`[WhatsApp delivery failed — backup channel]\n\n${message}`);
-  } else if (!ok) {
-    console.error("WhatsApp send failed and no backup channel configured — message lost.");
+  if (!ok) {
+    const queueId = enqueue(target, message);
+    console.log(`Queued message ${queueId} for retry.`);
+    if (backupEnabled()) {
+      console.log("Falling back to backup channel...");
+      await sendBackup(`[WhatsApp delivery failed — backup channel]\n\n${message}`);
+    } else {
+      console.error("WhatsApp send failed and no backup channel configured — message queued only.");
+    }
   }
   return ok;
 }

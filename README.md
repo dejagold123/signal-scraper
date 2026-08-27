@@ -92,26 +92,91 @@ pm2 save
 pm2 startup
 ```
 
+## 8. Testing and tuning without touching production
+
+- **`npm test`** — runs `test/parser.test.js` against `test/test-cases.json`.
+  Add a case there any time you tune a pattern, so a future edit can't
+  silently break something that used to work.
+- **`npm run dry-run`** — creates `sample-messages.txt` on first run, then
+  feeds each line through the parser only (no Telegram/WhatsApp connections,
+  no sends). Prefix a line with `callerId|` to test a per-caller override,
+  e.g. `111111111|entry @ 45000 long BTC`. Edit `patterns.json`, re-run, see
+  the effect immediately.
+- **`npm run audit -- YYYY-MM-DD`** — replays every logged event (calls
+  opened, updates applied, conflicts, disconnects, manual corrections) for
+  a given day from `events.jsonl`, for after-the-fact debugging.
+
+## 9. Tuning parser patterns without a restart
+
+`patterns.json` holds every regex the parser uses. Edit it while the bot is
+running — it's hot-reloaded via `fs.watch`, no restart needed. To handle a
+trader with a non-standard format, add an entry under `overrides` keyed by
+their numeric Telegram user ID:
+
+```json
+"overrides": {
+  "111111111": { "entry": "entry\\s*@\\s*([\\d,.]+)" }
+}
+```
+
+Any field you don't override falls back to `default`. Test changes with
+`npm run dry-run` before trusting them live.
+
+## 10. Manual corrections / injection (optional)
+
+Set `WEBHOOK_PORT` and `WEBHOOK_SECRET` in `.env` to expose two endpoints,
+both requiring an `X-Webhook-Secret` header matching your secret:
+
+```bash
+# Manually inject a call the bot didn't catch
+curl -X POST http://localhost:PORT/inject \
+  -H "X-Webhook-Secret: yoursecret" -H "Content-Type: application/json" \
+  -d '{"callerId":"manual","callerName":"me","symbol":"BTC","direction":"LONG","entry":"45000"}'
+
+# Manually correct a call's status
+curl -X POST http://localhost:PORT/correct \
+  -H "X-Webhook-Secret: yoursecret" -H "Content-Type: application/json" \
+  -d '{"callerId":"111111111","symbol":"BTC","status":"closed"}'
+```
+
+Leave `WEBHOOK_PORT` blank to disable this entirely — it's an open port on
+your VPS otherwise, so only turn it on if you'll actually use it, and put it
+behind a firewall rule limiting which IPs can reach it if possible.
+
 ## Notes / limitations
 
 - **whatsapp-web.js is unofficial** — it drives a real WhatsApp Web session.
   Keep volume low (this is a personal alert feed, not bulk messaging) to
-  avoid the linked device getting flagged. Set up the backup channel above
-  so a flag/ban doesn't mean total silence.
-- **Call/update parsing is regex-based** (see `parser.js`). Every trader
-  phrases calls differently — you'll likely need to tune the patterns after
-  watching real messages for a day or two. That's the one file worth
-  iterating on. Every parsed call now carries a `confidence` (high/medium/
-  low) based on how many fields were found — low/medium confidence calls
-  still get forwarded, but flagged, so you know to double check the
-  original message before acting on it.
-- **Unrecognized messages from watched senders are now forwarded, not
-  dropped** — flagged as "unrecognized format" so you see the raw text and
-  can judge for yourself if it was a real update the parser missed.
-- **Matching updates to calls** is done by (caller, symbol) pair, stored in
-  `active-calls.json`. If a caller posts two open calls on the same symbol
-  at once, the second overwrites the first's tracking — fine for most
-  channels, but flag it if that's a real scenario for yours.
-- **No reconnect/retry logic yet** for the Telegram socket dropping or
-  WhatsApp send failures beyond the one-shot backup fallback — worth adding
-  if this needs to survive unattended for weeks at a time.
+  avoid the linked device getting flagged. The backup channel (below) and
+  durable send queue mean a flag/ban doesn't lose messages, just delays or
+  reroutes them.
+- **Call/update parsing is regex-based** (see `parser.js` + `patterns.json`).
+  Every trader phrases calls differently — expect to tune patterns after
+  watching real messages for a day or two (see section 9). Every parsed
+  call carries a `confidence` (high/medium/low) based on how many fields
+  were found — low/medium confidence calls still get forwarded, but
+  flagged, so you know to double check the original message.
+- **Unrecognized messages from watched senders are forwarded, not
+  dropped** — flagged as "unrecognized format" so you see the raw text.
+- **Multiple simultaneous calls on the same symbol from the same caller are
+  now tracked separately** (unique call IDs, see `tracker.js`), instead of
+  the second overwriting the first.
+- **Edited updates that conflict with a call's already-recorded status**
+  (e.g. an edit changes "closed" back to "still open") are flagged as a
+  conflict and sent as a warning rather than silently overwritten.
+- **Anonymous channel admin posts** are now handled explicitly — logged
+  with a warning and labeled "Anonymous admin" rather than silently
+  becoming "Unknown". If your watched profiles ever post anonymously in
+  the channel (common for admin-run channels), you'll need to watch for
+  this in the logs since anonymous posts can't be matched against
+  `TG_WATCHED_USER_IDS` by user ID.
+- **Reconnect handling**: GramJS auto-reconnects on transient drops; a
+  60-second health check on top of that detects a stuck disconnect, tries
+  to reconnect, and fires an alert via the backup channel so you're not
+  just hoping it recovers unattended.
+- **Durable send queue**: any WhatsApp send that fails is queued to
+  `send-queue.json` and retried every 10 minutes (and once at startup) —
+  survives a crash between parsing and delivering a message.
+- **Event log** (`events.jsonl`) records every call open/update/conflict/
+  reconnect/manual correction with a timestamp — use `npm run audit` to
+  inspect it.

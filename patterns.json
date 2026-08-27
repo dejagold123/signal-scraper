@@ -1,0 +1,26 @@
+{
+  "default": {
+    "symbolDollar": "\\$([A-Z]{2,10})\\b",
+    "symbolBare": "\\b([A-Z]{2,10})(?:\\s?/\\s?(?:USDT|USD|PERP))?\\b",
+    "symbolStopwords": ["LONG", "SHORT", "BUY", "SELL", "SL", "TP", "ENTRY", "USDT", "USD", "PERP", "BE", "OK"],
+    "direction": "\\b(long|short|buy|sell)\\b",
+    "entry": "entry[:\\s]*([\\d,.]+(?:\\s*-\\s*[\\d,.]+)?)",
+    "stopLoss": "(?:stop\\s?loss|sl)[:\\s]*([\\d,.]+)",
+    "takeProfit": "tp(\\d+)?\\s*[:=]?\\s*([\\d,.]+)",
+    "leverage": "(\\d{1,3})x",
+    "updateKeywords": [
+      { "pattern": "\\b(closed?|close[sd]? in profit|position closed)\\b", "kind": "closed" },
+      { "pattern": "\\b(stopped out|sl hit|stop hit|stop loss hit)\\b", "kind": "stopped_out" },
+      { "pattern": "\\bpartial(s)?\\s?(taken|closed|booked)?\\b", "kind": "partial" },
+      { "pattern": "\\btp\\s?\\d?\\s?(hit|reached|done)\\b", "kind": "tp_hit" },
+      { "pattern": "\\bmoved?\\s?sl\\s?to\\s?(be|breakeven|entry)\\b", "kind": "sl_to_be" },
+      { "pattern": "\\bfull(y)?\\s?closed\\b", "kind": "closed" }
+    ]
+  },
+  "overrides": {
+    "_comment": "Key by Telegram numeric user ID (as a string) to override any field above for one specific caller, e.g. if they use a non-standard format like 'ENTRY @ 100' or 'BOUGHT' instead of 'BUY'.",
+    "_example": {
+      "entry": "entry\\s*@\\s*([\\d,.]+)"
+    }
+  }
+}

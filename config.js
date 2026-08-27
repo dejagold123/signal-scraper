@@ -27,6 +27,10 @@ const config = {
     chatId: process.env.TG_BOT_CHAT_ID || "",
   },
   heartbeatHours: parseInt(process.env.HEARTBEAT_HOURS || "24", 10),
+  webhook: {
+    port: process.env.WEBHOOK_PORT ? parseInt(process.env.WEBHOOK_PORT, 10) : null,
+    secret: process.env.WEBHOOK_SECRET || "",
+  },
 };
 
 function isWatchedSender(senderId, senderUsername) {

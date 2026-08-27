@@ -1,88 +1,66 @@
-// Lightweight regex-based parser. Trade call formats vary a lot between callers,
-// so this aims to catch the common patterns and degrade gracefully — if it can't
-// find a symbol, it still forwards the raw text as an "unclassified" message
-// rather than silently dropping it.
+// Regex-based parser. Patterns live in patterns.json (loaded via
+// patterns-loader.js) so they can be tuned per-caller without a code change
+// or restart — see patterns.json for the override format.
 
-// Prefer a $-prefixed symbol (unambiguous). Fall back to a bare all-caps
-// word, but exclude common trade-vocabulary words that would otherwise get
-// mistaken for the symbol itself (e.g. "LONG $BTC" matching "LONG").
-const SYMBOL_DOLLAR_RE = /\$([A-Z]{2,10})\b/;
-const SYMBOL_BARE_RE = /\b([A-Z]{2,10})(?:\s?\/\s?(?:USDT|USD|PERP))?\b/;
-const SYMBOL_STOPWORDS = new Set([
-  "LONG", "SHORT", "BUY", "SELL", "SL", "TP", "ENTRY", "USDT", "USD",
-  "PERP", "BE", "OK",
-]);
-const DIRECTION_RE = /\b(long|short|buy|sell)\b/i;
-const ENTRY_RE = /entry[:\s]*([\d,.]+(?:\s*-\s*[\d,.]+)?)/i;
-const SL_RE = /(?:stop\s?loss|sl)[:\s]*([\d,.]+)/i;
-// Index digit (TP1, TP2) must immediately follow "tp" with no space —
-// otherwise "TP 3000" (no index) would greedily eat the "3" as the index
-// and leave "000" as the price.
-const TP_RE = /tp(\d+)?\s*[:=]?\s*([\d,.]+)/gi;
-const LEVERAGE_RE = /(\d{1,3})x/i;
+const { getPatternsFor } = require("./patterns-loader");
 
-const UPDATE_KEYWORDS = [
-  { re: /\b(closed?|close[sd]? in profit|position closed)\b/i, kind: "closed" },
-  { re: /\b(stopped out|sl hit|stop hit|stop loss hit)\b/i, kind: "stopped_out" },
-  { re: /\bpartial(s)?\s?(taken|closed|booked)?\b/i, kind: "partial" },
-  { re: /\btp\s?\d?\s?(hit|reached|done)\b/i, kind: "tp_hit" },
-  { re: /\bmoved?\s?sl\s?to\s?(be|breakeven|entry)\b/i, kind: "sl_to_be" },
-  { re: /\bfull(y)?\s?closed\b/i, kind: "closed" },
-];
-
-function extractSymbol(text) {
-  const dollarMatch = text.match(SYMBOL_DOLLAR_RE);
+function extractSymbol(text, p) {
+  const dollarRe = new RegExp(p.symbolDollar);
+  const dollarMatch = text.match(dollarRe);
   if (dollarMatch) return dollarMatch[1].toUpperCase();
 
-  // Fall back to scanning all-caps words for the first one that isn't a
-  // known stopword, rather than blindly taking the first match.
-  const bareMatches = text.match(new RegExp(SYMBOL_BARE_RE, "g")) || [];
+  const stopwords = new Set(p.symbolStopwords.map((w) => w.toUpperCase()));
+  const bareRe = new RegExp(p.symbolBare, "g");
+  const bareMatches = text.match(bareRe) || [];
   for (const raw of bareMatches) {
     const word = raw.split("/")[0].trim().toUpperCase();
-    if (!SYMBOL_STOPWORDS.has(word)) return word;
+    if (!stopwords.has(word)) return word;
   }
   return null;
 }
 
-function detectUpdate(text) {
-  for (const { re, kind } of UPDATE_KEYWORDS) {
-    if (re.test(text)) return kind;
+function detectUpdate(text, p) {
+  for (const { pattern, kind } of p.updateKeywords) {
+    if (new RegExp(pattern, "i").test(text)) return kind;
   }
   return null;
 }
 
-function looksLikeNewCall(text) {
-  // Needs a direction word and either an entry or a symbol with $ to count as a fresh call
-  return DIRECTION_RE.test(text) && (ENTRY_RE.test(text) || /\$[A-Z]{2,10}/.test(text));
+function looksLikeNewCall(text, p) {
+  const directionRe = new RegExp(p.direction, "i");
+  const entryRe = new RegExp(p.entry, "i");
+  return directionRe.test(text) && (entryRe.test(text) || /\$[A-Z]{2,10}/.test(text));
 }
 
-function parseMessage(text) {
+/**
+ * @param {string} text - the raw message text
+ * @param {string|number|null} callerId - used to look up per-caller pattern overrides
+ */
+function parseMessage(text, callerId = null) {
   if (!text) return { type: "unknown", raw: text };
 
-  const symbol = extractSymbol(text);
-  const updateKind = detectUpdate(text);
+  const p = getPatternsFor(callerId);
+  const symbol = extractSymbol(text, p);
+  const updateKind = detectUpdate(text, p);
 
   if (updateKind) {
     return { type: "update", kind: updateKind, symbol, raw: text };
   }
 
-  if (looksLikeNewCall(text)) {
-    const direction = (text.match(DIRECTION_RE) || [])[1] || null;
-    const entry = (text.match(ENTRY_RE) || [])[1] || null;
-    const sl = (text.match(SL_RE) || [])[1] || null;
+  if (looksLikeNewCall(text, p)) {
+    const direction = (text.match(new RegExp(p.direction, "i")) || [])[1] || null;
+    const entry = (text.match(new RegExp(p.entry, "i")) || [])[1] || null;
+    const sl = (text.match(new RegExp(p.stopLoss, "i")) || [])[1] || null;
 
     const tps = [];
+    const tpRe = new RegExp(p.takeProfit, "gi");
     let tpMatch;
-    TP_RE.lastIndex = 0;
-    while ((tpMatch = TP_RE.exec(text)) !== null) {
+    while ((tpMatch = tpRe.exec(text)) !== null) {
       tps.push(tpMatch[2]);
     }
 
-    const leverage = (text.match(LEVERAGE_RE) || [])[1] || null;
+    const leverage = (text.match(new RegExp(p.leverage, "i")) || [])[1] || null;
 
-    // Confidence reflects how many expected fields were actually found —
-    // low-confidence calls still get forwarded, but flagged so you know to
-    // go check the original message before acting on it.
     const fieldsFound = [symbol, direction, entry, sl, tps.length > 0].filter(Boolean).length;
     let confidence = "low";
     if (fieldsFound >= 4) confidence = "high";

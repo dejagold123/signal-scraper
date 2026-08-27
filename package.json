@@ -6,7 +6,10 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "login": "node telegram-login.js"
+    "login": "node telegram-login.js",
+    "test": "node test/parser.test.js",
+    "dry-run": "node dry-run.js",
+    "audit": "node audit.js"
   },
   "dependencies": {
     "telegram": "^2.22.2",

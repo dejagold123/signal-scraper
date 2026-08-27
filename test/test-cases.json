@@ -1,0 +1,34 @@
+[
+  {
+    "text": "LONG $BTC entry: 45000 SL: 44000 TP1: 46000 TP2: 47000 20x",
+    "expect": { "type": "call", "symbol": "BTC", "direction": "LONG", "entry": "45000", "sl": "44000", "confidence": "high" }
+  },
+  {
+    "text": "SHORT ETH entry: 3200 SL 3300 TP 3000",
+    "expect": { "type": "call", "symbol": "ETH", "direction": "SHORT", "entry": "3200", "sl": "3300" }
+  },
+  {
+    "text": "TP1 hit on BTC, moving SL to BE",
+    "expect": { "type": "update", "kind": "tp_hit", "symbol": "BTC" }
+  },
+  {
+    "text": "closed BTC in profit",
+    "expect": { "type": "update", "kind": "closed", "symbol": "BTC" }
+  },
+  {
+    "text": "partial taken on ETH",
+    "expect": { "type": "update", "kind": "partial", "symbol": "ETH" }
+  },
+  {
+    "text": "stopped out on SOL",
+    "expect": { "type": "update", "kind": "stopped_out", "symbol": "SOL" }
+  },
+  {
+    "text": "anyone else watching the fed today",
+    "expect": { "type": "unknown" }
+  },
+  {
+    "text": "long eth looks good here",
+    "expect": { "type": "unknown" }
+  }
+]

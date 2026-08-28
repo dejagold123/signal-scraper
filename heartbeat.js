@@ -1,7 +1,7 @@
 const { config } = require("./config");
 const { formatHeartbeat } = require("./format");
 const { countOpenCalls } = require("./tracker");
-const { sendWithFallback } = require("./whatsapp");
+const { deliverWithQueue } = require("./dispatch");
 
 function startHeartbeat(waClient) {
   const intervalMs = config.heartbeatHours * 60 * 60 * 1000;
@@ -9,7 +9,7 @@ function startHeartbeat(waClient) {
   const beat = async () => {
     const msg = formatHeartbeat(config.tg.channel, countOpenCalls());
     console.log("Sending heartbeat...");
-    await sendWithFallback(waClient, config.wa.target, msg);
+    await deliverWithQueue(waClient, msg);
   };
 
   // Send one shortly after startup so you get immediate confirmation it's alive,

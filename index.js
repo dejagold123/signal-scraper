@@ -5,10 +5,11 @@ const {
   startConnectionMonitor,
   setDisconnectAlertHandler,
 } = require("./telegram");
-const { createWhatsAppClient, sendWithFallback, sendWhatsApp } = require("./whatsapp");
+const { createWhatsAppClient } = require("./whatsapp");
+const { discordEnabled } = require("./discord");
 const { backupEnabled, sendBackup } = require("./backup");
 const { parseMessage } = require("./parser");
-const { addCall, getOpenCall, applyUpdate, countOpenCalls } = require("./tracker");
+const { addCall, getOpenCall, applyUpdate } = require("./tracker");
 const {
   formatNewCall,
   formatUpdate,
@@ -17,29 +18,41 @@ const {
 } = require("./format");
 const { startHeartbeat } = require("./heartbeat");
 const { startWebhook } = require("./webhook");
+const { deliver, deliverWithQueue } = require("./dispatch");
 const { flushQueue } = require("./queue");
 const { logEvent } = require("./eventlog");
 
 (async () => {
-  if (!config.wa.target) {
-    console.error("WA_TARGET is not set in .env — nowhere to send messages.");
+  if (!discordEnabled() && !config.wa.target) {
+    console.error(
+      "Neither DISCORD_WEBHOOK_URL nor WA_TARGET is set in .env — nowhere to send messages."
+    );
     process.exit(1);
   }
 
-  const wa = createWhatsAppClient();
-  await wa.initialize();
+  if (!discordEnabled()) {
+    console.log("Note: DISCORD_WEBHOOK_URL not set — WhatsApp will be used as the only channel.");
+  }
+
+  // WhatsApp is now the backup channel — only spin up the client (and its
+  // QR/session overhead) if it's actually configured.
+  let wa = null;
+  if (config.wa.target) {
+    wa = createWhatsAppClient();
+    await wa.initialize();
+  } else {
+    console.log("WA_TARGET not set — no WhatsApp backup configured (Discord only).");
+  }
 
   if (!backupEnabled()) {
     console.log(
-      "Note: no backup channel configured (TG_BOT_TOKEN/TG_BOT_CHAT_ID unset). " +
-        "If WhatsApp delivery fails, messages are queued for retry but not delivered elsewhere in the meantime."
+      "Note: no Telegram-bot backup configured (TG_BOT_TOKEN/TG_BOT_CHAT_ID unset). " +
+        "If both Discord and WhatsApp fail, messages are queued for retry but not delivered elsewhere in the meantime."
     );
   }
 
   const tg = await createTelegramClient();
 
-  // If the Telegram connection drops, say so on the backup channel — silence
-  // from the whole system is the one failure mode you'd never notice.
   setDisconnectAlertHandler(async () => {
     if (backupEnabled()) {
       await sendBackup("⚠️ Telegram connection dropped — attempting to reconnect.");
@@ -53,7 +66,7 @@ const { logEvent } = require("./eventlog");
     if (parsed.type === "call") {
       const call = addCall(senderId, senderName, parsed);
       console.log(`New call (${parsed.confidence} confidence): ${senderName} -> ${parsed.symbol} [${call.id}]`);
-      await sendWithFallback(wa, config.wa.target, formatNewCall(senderName, parsed));
+      await deliverWithQueue(wa, formatNewCall(senderName, parsed));
       return;
     }
 
@@ -65,26 +78,25 @@ const { logEvent } = require("./eventlog");
         const message = conflict
           ? `⚠️ Conflicting edited update for ${parsed.symbol} (${senderName}) — verify manually:\n\n"${parsed.raw}"`
           : formatUpdate(senderName, parsed.symbol, parsed.kind, parsed.raw);
-        await sendWithFallback(wa, config.wa.target, message);
+        await deliverWithQueue(wa, message);
       } else {
         console.log(`Unmatched update from ${senderName}: ${text.slice(0, 60)}`);
-        await sendWithFallback(wa, config.wa.target, formatUnmatchedUpdate(senderName, text));
+        await deliverWithQueue(wa, formatUnmatchedUpdate(senderName, text));
       }
       return;
     }
 
-    // Unclassified message from a watched profile — forward it flagged rather
-    // than dropping it silently.
     console.log(`Unclassified message from ${senderName}: ${text.slice(0, 60)}`);
-    await sendWithFallback(wa, config.wa.target, formatUnclassified(senderName, text));
+    await deliverWithQueue(wa, formatUnclassified(senderName, text));
   });
 
   startHeartbeat(wa);
   startWebhook();
 
-  // Retry anything left in the durable send queue from a previous crash,
-  // then keep retrying periodically.
-  const flush = () => flushQueue((target, message) => sendWhatsApp(wa, target, message));
+  // Retry the durable queue through the same Discord -> WhatsApp chain, so
+  // if Discord was down and recovers, retries go back through it instead of
+  // being stuck on WhatsApp forever.
+  const flush = () => flushQueue((_target, message) => deliver(wa, message));
   setTimeout(flush, 15 * 1000);
   setInterval(flush, 10 * 60 * 1000);
 

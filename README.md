@@ -1,8 +1,9 @@
-# Telegram → WhatsApp Trade Signal Bot
+# Telegram → Discord/WhatsApp Trade Signal Bot
 
 Watches a Telegram channel for calls from specific profiles, forwards them to
-WhatsApp, and keeps tracking each call so partials/TP hits/closes get sent as
-follow-ups on the same trade.
+Discord (primary) with WhatsApp as an automatic backup, and keeps tracking
+each call so partials/TP hits/closes get sent as follow-ups on the same
+trade.
 
 ## 1. Install
 
@@ -10,8 +11,9 @@ follow-ups on the same trade.
 npm install
 ```
 
-Node 18+ recommended. On a fresh Ubuntu VPS you'll also need Chromium deps for
-whatsapp-web.js's Puppeteer:
+Node 18+ recommended. Chromium deps for whatsapp-web.js's Puppeteer are only
+needed if you set up the WhatsApp backup channel (step 6) — skip this if
+you're running Discord-only:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y \
@@ -46,31 +48,37 @@ console. Copy the IDs of the traders you actually want, put them in
 `TG_WATCHED_USER_IDS`, then restart. IDs are preferred over usernames since
 usernames can change.
 
-## 5. WhatsApp
+## 5. Discord (primary channel)
 
-Set `WA_TARGET` in `.env` — your own number as `2348012345678@c.us`, or a
-group id ending in `@g.us`.
+In your Discord server: pick a channel → Edit Channel → Integrations →
+Webhooks → New Webhook → Copy Webhook URL. Paste it into `.env` as
+`DISCORD_WEBHOOK_URL`. That's the entire setup — no bot, no login, nothing
+to keep alive.
 
-## 6. Backup channel + heartbeat (recommended)
+## 6. WhatsApp (optional backup) + Telegram-bot backup + heartbeat
 
-WhatsApp delivery via whatsapp-web.js is unofficial and can occasionally get
-flagged or disconnected. To avoid the bot going silent without you noticing:
+- **WhatsApp** is now the backup channel, used automatically if a Discord
+  send fails. Set `WA_TARGET` in `.env` (your number as
+  `2348012345678@c.us`, or a group ending in `@g.us`) if you want it.
+  Leave it blank to run Discord-only — no QR scan, no Puppeteer needed.
 
-- **Backup channel**: a second, separate Telegram bot that DMs you directly.
-  If a WhatsApp send fails, the message automatically falls back to this bot
-  instead of being lost. Setup:
+- **Telegram-bot backup** (last resort): a separate Telegram bot that DMs
+  you directly, used only if *both* Discord and WhatsApp fail, and for
+  critical alerts like a dropped Telegram connection. Setup:
   1. Message `@BotFather` on Telegram → `/newbot` → get a token.
   2. Send your new bot any message (e.g. "hi") to open a chat with it.
   3. Visit `https://api.telegram.org/bot<TOKEN>/getUpdates` and read your
      numeric chat id from the JSON response.
   4. Set `TG_BOT_TOKEN` and `TG_BOT_CHAT_ID` in `.env`.
-  This is optional — if left blank, a failed WhatsApp send is just logged.
+  Optional — if left blank, a total delivery failure is just logged and
+  queued for retry.
 
 - **Heartbeat**: every `HEARTBEAT_HOURS` (default 24), the bot sends itself
-  a "still alive, watching X, N open calls" ping. If a day goes by with no
-  heartbeat, that's your signal something crashed or got disconnected —
-  worth pointing an uptime check (e.g. a simple cron job or `pm2` restart
-  policy) at this instead of assuming silence means "no calls."
+  a "still alive, watching X, N open calls" ping through the same
+  Discord → WhatsApp chain. If a day goes by with no heartbeat, that's your
+  signal something crashed or got disconnected — worth pointing an uptime
+  check (e.g. a simple cron job or `pm2` restart policy) at this instead of
+  assuming silence means "no calls."
 
 ## 7. Run it
 
@@ -145,11 +153,12 @@ behind a firewall rule limiting which IPs can reach it if possible.
 
 ## Notes / limitations
 
-- **whatsapp-web.js is unofficial** — it drives a real WhatsApp Web session.
-  Keep volume low (this is a personal alert feed, not bulk messaging) to
-  avoid the linked device getting flagged. The backup channel (below) and
-  durable send queue mean a flag/ban doesn't lose messages, just delays or
-  reroutes them.
+- **Discord is the primary channel** — a stateless webhook POST, no bot
+  login, no session, no ban risk. **WhatsApp is now backup-only**: it still
+  uses the unofficial whatsapp-web.js under the hood, but since it's no
+  longer the primary channel, message volume through it is much lower,
+  reducing (not eliminating) flag/ban risk further. It's entirely optional
+  — leave `WA_TARGET` blank to run Discord-only.
 - **Call/update parsing is regex-based** (see `parser.js` + `patterns.json`).
   Every trader phrases calls differently — expect to tune patterns after
   watching real messages for a day or two (see section 9). Every parsed
@@ -172,11 +181,12 @@ behind a firewall rule limiting which IPs can reach it if possible.
   `TG_WATCHED_USER_IDS` by user ID.
 - **Reconnect handling**: GramJS auto-reconnects on transient drops; a
   60-second health check on top of that detects a stuck disconnect, tries
-  to reconnect, and fires an alert via the backup channel so you're not
+  to reconnect, and fires an alert via the Telegram-bot backup so you're not
   just hoping it recovers unattended.
-- **Durable send queue**: any WhatsApp send that fails is queued to
-  `send-queue.json` and retried every 10 minutes (and once at startup) —
-  survives a crash between parsing and delivering a message.
+- **Durable send queue**: any message that fails both Discord and WhatsApp
+  is queued to `send-queue.json` and retried every 10 minutes (and once at
+  startup) through the same Discord → WhatsApp chain — survives a crash
+  between parsing and delivering a message.
 - **Event log** (`events.jsonl`) records every call open/update/conflict/
   reconnect/manual correction with a timestamp — use `npm run audit` to
   inspect it.

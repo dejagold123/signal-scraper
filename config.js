@@ -20,7 +20,10 @@ const config = {
     ),
   },
   wa: {
-    target: process.env.WA_TARGET,
+    target: process.env.WA_TARGET || "",
+  },
+  discord: {
+    webhookUrl: process.env.DISCORD_WEBHOOK_URL || "",
   },
   backup: {
     botToken: process.env.TG_BOT_TOKEN || "",
